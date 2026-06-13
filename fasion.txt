@@ -1,0 +1,231 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import kagglehub
+import os
+
+# Scikit-learn 传统机器学习
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import StandardScaler
+
+# PyTorch 深度学习
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+
+# 绘图中文设置
+plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# 设备选择
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"运行设备: {device}")
+
+# 类别名称映射
+class_names = [
+    "T恤", "裤子", "套头衫", "连衣裙", "外套",
+    "凉鞋", "衬衫", "运动鞋", "包", "短靴"
+]
+
+# ---------- 1. 数据加载 ----------
+path = kagglehub.dataset_download("zalando-research/fashionmnist")
+print("数据集文件路径:", path)
+
+# 定位训练集、测试集 CSV 文件
+train_csv_path = os.path.join(path, "fashion-mnist_train.csv")
+test_csv_path = os.path.join(path, "fashion-mnist_test.csv")
+
+# 读取数据
+train_df = pd.read_csv(train_csv_path)
+test_df = pd.read_csv(test_csv_path)
+
+print(f"训练集总行数: {train_df.shape[0]}, 特征数: {train_df.shape[1]}")
+print(f"测试集总行数: {test_df.shape[0]}, 特征数: {test_df.shape[1]}")
+
+# 拆分标签与像素特征
+# 第一列为 label，后面 784 列为像素
+X_train = train_df.iloc[:, 1:].values
+y_train = train_df.iloc[:, 0].values
+X_test = test_df.iloc[:, 1:].values
+y_test = test_df.iloc[:, 0].values
+
+print(f"X_train 形状: {X_train.shape}, y_train 形状: {y_train.shape}")
+print(f"X_test 形状: {X_test.shape}, y_test 形状: {y_test.shape}")
+
+# ---------- 2. 数据可视化 ----------
+# 可视化前16张样本图片
+plt.figure(figsize=(10, 10))
+plt.rcParams["font.family"] = ["SimHei"]
+plt.rcParams["axes.unicode_minus"] = False
+for i in range(16):
+    plt.subplot(4, 4, i+1)
+    img = X_train[i].reshape(28, 28)
+    plt.imshow(img, cmap="gray")
+    plt.title(class_names[y_train[i]])
+    plt.axis("off")
+plt.tight_layout()
+plt.show()
+
+# ---------- 3. 方法一：逻辑回归 ----------
+# 数据标准化
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# 训练逻辑回归
+lr_model = LogisticRegression(max_iter=2000, random_state=42)
+print("开始训练逻辑回归模型...")
+lr_model.fit(X_train_scaled, y_train)
+
+# 预测与评估
+y_pred_lr = lr_model.predict(X_test_scaled)
+lr_acc = accuracy_score(y_test, y_pred_lr)
+print(f"【逻辑回归】测试集准确率: {lr_acc:.4f}")
+print("分类报告：")
+print(classification_report(y_test, y_pred_lr, target_names=class_names))
+
+# ---------- 4. 方法二：随机森林 ----------
+# 训练随机森林
+rf_model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+print("开始训练随机森林模型...")
+rf_model.fit(X_train, y_train)
+
+# 预测与评估
+y_pred_rf = rf_model.predict(X_test)
+rf_acc = accuracy_score(y_test, y_pred_rf)
+print(f"【随机森林】测试集准确率: {rf_acc:.4f}")
+print("分类报告：")
+print(classification_report(y_test, y_pred_rf, target_names=class_names))
+
+# ---------- 5. 方法三：全连接神经网络 ----------
+# 自定义 Dataset 适配 CSV 数据
+class FashionDataset(Dataset):
+    def __init__(self, features, labels):
+        self.features = features
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        # 归一化到 [0,1]，转为张量
+        img = torch.tensor(self.features[idx], dtype=torch.float32) / 255.0
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
+        return img, label
+
+# 构建数据集与加载器
+batch_size = 64
+train_dataset = FashionDataset(X_train, y_train)
+test_dataset = FashionDataset(X_test, y_test)
+
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+# 定义全连接网络
+class FCNet(nn.Module):
+    def __init__(self):
+        super(FCNet, self).__init__()
+        self.fc1 = nn.Linear(784, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 10)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        out = self.fc3(x)
+        return out
+
+# 初始化模型、损失、优化器
+model = FCNet().to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+# 训练函数
+def train(model, loader):
+    model.train()
+    running_loss = 0.0
+    for imgs, labels in loader:
+        imgs, labels = imgs.to(device), labels.to(device)
+        optimizer.zero_grad()
+        outputs = model(imgs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
+    return running_loss / len(loader)
+
+# 测试函数
+def test(model, loader):
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for imgs, labels in loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            outputs = model(imgs)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    return correct / total
+
+# 开始训练
+epochs = 10
+print("开始训练 PyTorch 全连接网络...")
+for ep in range(epochs):
+    loss = train(model, train_loader)
+    print(f"Epoch [{ep+1}/{epochs}], Loss: {loss:.4f}")
+
+# 测试准确率
+nn_acc = test(model, test_loader)
+print(f"【PyTorch 全连接网络】测试集准确率: {nn_acc:.4f}")
+
+# ---------- 6. 多模型结果对比 ----------
+models = ["逻辑回归", "随机森林", "全连接神经网络"]
+accuracies = [lr_acc, rf_acc, nn_acc]
+
+plt.figure(figsize=(8, 5))
+bars = plt.bar(models, accuracies, color=["#3498db", "#2ecc71", "#e74c3c"])
+plt.ylim(0.7, 1.0)
+plt.title("Fashion MNIST 不同分类算法准确率对比")
+plt.ylabel("准确率")
+
+# 标注数值
+for bar, acc in zip(bars, accuracies):
+    plt.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.01,
+             f"{acc:.4f}", ha="center", fontsize=12)
+plt.show()
+
+# 文本汇总
+print("="*50)
+print("算法最终结果汇总：")
+for name, acc in zip(models, accuracies):
+    print(f"{name:12s} : 准确率 = {acc:.4f}")
+print("="*50)
+
+# ---------- 7. 随机展示测试样本预测效果 ----------
+fig = plt.figure(figsize=(12, 8))
+rows, cols = 3, 4
+plt.rcParams["font.family"] = ["SimHei"]
+plt.rcParams["axes.unicode_minus"] = False
+model.eval()
+with torch.no_grad():
+    for idx in range(rows * cols):
+        img, label = test_dataset[idx]
+        img_input = img.unsqueeze(0).to(device)
+        output = model(img_input)
+        _, pred = torch.max(output, 1)
+
+        plt.subplot(rows, cols, idx+1)
+        plt.imshow(img.numpy().reshape(28, 28), cmap="gray")
+        true_label = class_names[label.item()]
+        pred_label = class_names[pred.item()]
+        color = "green" if true_label == pred_label else "red"
+        plt.title(f"真实:{true_label}\n预测:{pred_label}", color=color)
+        plt.axis("off")
+
+plt.tight_layout()
+plt.show()
