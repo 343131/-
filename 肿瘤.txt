@@ -1,0 +1,129 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import kagglehub
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+# 解决matplotlib中文乱码
+plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC"]
+plt.rcParams["axes.unicode_minus"] = False
+
+# ---------- 1. 下载并加载数据集 ----------
+print("正在下载数据集...")
+dataset_path = kagglehub.dataset_download("priyanka841/breast-cancer-wisconsin")
+
+# 读取csv文件
+csv_file = [f for f in os.listdir(dataset_path) if f.endswith(".csv")][0]
+data = pd.read_csv(os.path.join(dataset_path, csv_file))
+
+# 查看数据基本信息
+print("数据集形状：", data.shape)
+print("\n前5行数据：")
+display(data.head())
+print("\n数据类型与缺失值：")
+print(data.info())
+print("\n标签分布(B=良性, M=恶性)：")
+print(data["diagnosis"].value_counts())
+
+# ---------- 2. 数据预处理 ----------
+# 删除无用列
+if "id" in data.columns:
+    data = data.drop("id", axis=1)
+if "Unnamed: 32" in data.columns:
+    data = data.drop("Unnamed: 32", axis=1)
+
+# 标签编码：B→0(良性)，M→1(恶性)
+data["diagnosis"] = data["diagnosis"].map({"B": 0, "M": 1})
+
+# 划分特征与标签
+X = data.drop("diagnosis", axis=1)
+y = data["diagnosis"]
+
+# 划分训练集、测试集 7:3
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
+)
+
+# 特征标准化
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# ---------- 3. 定义模型 + 训练与评估 ----------
+# 定义4种分类模型
+models = {
+    "逻辑回归": LogisticRegression(random_state=42, max_iter=1000),
+    "SVM支持向量机": SVC(random_state=42),
+    "K近邻KNN": KNeighborsClassifier(n_neighbors=5),
+    "随机森林": RandomForestClassifier(random_state=42, n_estimators=100)
+}
+
+acc_results = {}
+
+# 循环训练、预测、评估
+for name, model in models.items():
+    print(f"========== {name} ==========")
+    model.fit(X_train_scaled, y_train)
+    y_pred = model.predict(X_test_scaled)
+    acc = accuracy_score(y_test, y_pred)
+    acc_results[name] = acc
+    print(f"测试集准确率: {acc:.4f}")
+    print(classification_report(y_test, y_pred, target_names=["良性(B)", "恶性(M)"]))
+    print("-" * 50)
+
+# 汇总准确率
+print("===== 所有模型准确率汇总 =====")
+for k, v in acc_results.items():
+    print(f"{k}：{v:.4f}")
+
+# 选出最优模型
+best_name = max(acc_results, key=acc_results.get)
+best_model = models[best_name]
+print(f"\n最优模型：{best_name}")
+
+# ---------- 4. 可视化1：多模型准确率对比柱状图 ----------
+plt.figure(figsize=(10, 5))
+plt.rcParams["font.family"] = ["SimHei"]
+plt.rcParams["axes.unicode_minus"] = False
+sns.barplot(x=list(acc_results.keys()), y=list(acc_results.values()), palette="viridis")
+plt.title("四种分类模型准确率对比", fontsize=14)
+plt.ylabel("准确率")
+plt.ylim(0.8, 1.0)
+plt.grid(axis="y", alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# ---------- 5. 可视化2：最优模型混淆矩阵 ----------
+y_best_pred = best_model.predict(X_test_scaled)
+plt.figure(figsize=(6, 5))
+cm = confusion_matrix(y_test, y_best_pred)
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["良性", "恶性"],
+            yticklabels=["良性", "恶性"])
+plt.title(f"{best_name} 混淆矩阵")
+plt.ylabel("真实标签")
+plt.xlabel("预测标签")
+plt.tight_layout()
+plt.show()
+
+# ---------- 6. 可视化3：随机森林 Top10 重要特征 ----------
+rf_model = models["随机森林"]
+feature_importance = pd.Series(rf_model.feature_importances_, index=X.columns)
+top10_features = feature_importance.sort_values(ascending=False).head(10)
+
+plt.figure(figsize=(10, 6))
+top10_features.plot(kind="bar", color="steelblue")
+plt.title("随机森林 - Top10 重要特征")
+plt.ylabel("特征重要度")
+plt.xticks(rotation=45, ha="right")
+plt.tight_layout()
+plt.show()
